@@ -44,7 +44,16 @@ border-radius:15px;
 # LOAD DATA
 # ----------------------------
 
-df = pd.read_csv("DataSet (1).csv")
+uploaded_file = st.file_uploader(
+    "📂 Upload Fraud Dataset (.csv)",
+    type=["csv"]
+)
+
+if uploaded_file is None:
+    st.info("Please upload the dataset to continue.")
+    st.stop()
+
+df = pd.read_csv(uploaded_file)
 
 # ----------------------------
 # HEADER
