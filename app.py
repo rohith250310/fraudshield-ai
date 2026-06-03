@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
 import plotly.express as px
 
+# ----------------------------
+# PAGE CONFIG
+# ----------------------------
 st.set_page_config(
     page_title="FraudShield AI",
     page_icon="🏦",
@@ -11,357 +13,244 @@ st.set_page_config(
 )
 
 # ----------------------------
-# CSS
-# ----------------------------
-
-st.markdown("""
-<style>
-
-.main-title{
-font-size:42px;
-font-weight:bold;
-color:#00D09C;
-text-align:center;
-}
-
-.subtitle{
-font-size:18px;
-text-align:center;
-color:gray;
-margin-bottom:25px;
-}
-
-.card{
-background:#111827;
-padding:15px;
-border-radius:15px;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-# ----------------------------
-# LOAD DATA
-# ----------------------------
-
-uploaded_file = st.file_uploader(
-    "📂 Upload Fraud Dataset (.csv)",
-    type=["csv"]
-)
-
-if uploaded_file is None:
-    st.info("Please upload the dataset to continue.")
-    st.stop()
-
-df = pd.read_csv(uploaded_file)
-
-# ----------------------------
 # HEADER
 # ----------------------------
-
-st.markdown(
-    "<div class='main-title'>🏦 FraudShield AI</div>",
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    "<div class='subtitle'>Real-Time Mule Account Risk Intelligence Platform</div>",
-    unsafe_allow_html=True
-)
+st.title("🏦 FraudShield AI")
+st.subheader("Mule Account Detection + Explainable AI System")
 
 # ----------------------------
-# KPI
+# UPLOAD DATA
 # ----------------------------
+file = st.file_uploader("Upload CSV Dataset", type=["csv"])
 
-fraud_cases = int(df["F3924"].sum())
+if file is None:
+    st.stop()
 
-c1,c2,c3,c4 = st.columns(4)
+df = pd.read_csv(file)
 
-c1.metric(
-    "Accounts Analysed",
-    f"{len(df):,}"
-)
+# ----------------------------
+# ACCOUNT ID
+# ----------------------------
+df.rename(columns={df.columns[0]: "Account_ID"}, inplace=True)
 
-c2.metric(
-    "Suspicious Accounts",
-    fraud_cases
-)
-
-c3.metric(
-    "Fraud Rate",
-    f"{round((fraud_cases/len(df))*100,2)}%"
-)
-
-c4.metric(
-    "System Status",
-    "ACTIVE"
-)
-
-st.divider()
+label_col = "F3924"
 
 # ----------------------------
 # FEATURES
 # ----------------------------
+features = ["F2582","F2737","F2956","F3836","F3887","F1692","F670"]
 
-st.sidebar.title("Account Features")
-
-numeric_features = [
-    "F115","F321","F527","F531",
-    "F670","F1692","F2082",
-    "F2122","F2582","F2678",
-    "F2737","F2956","F3043",
-    "F3836","F3887","F3894"
-]
-
-categorical_features = [
-    "F3889",
-    "F3891"
-]
-
-inputs = {}
-
-for col in numeric_features:
-
-    inputs[col] = st.sidebar.slider(
-        col,
-        float(df[col].min()),
-        float(df[col].max()),
-        float(df[col].median())
-    )
-
-for col in categorical_features:
-
-    inputs[col] = st.sidebar.selectbox(
-        col,
-        sorted(df[col].astype(str).unique())
-    )
+for col in features:
+    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
 # ----------------------------
-# DYNAMIC RISK ENGINE
+# NORMALIZATION
 # ----------------------------
+df_norm = df.copy()
 
-risk_score = 0
-
-risk_score += abs(inputs["F2582"]) * 15
-risk_score += abs(inputs["F2737"]) * 25
-risk_score += inputs["F2956"] / 3
-risk_score += inputs["F3836"] / 10000
-risk_score += inputs["F3887"] / 10
-risk_score += inputs["F1692"] * 10
-risk_score += inputs["F670"] * 12
-
-if inputs["F3891"] == "selfemployed":
-    risk_score += 8
-
-if inputs["F3891"] == "student":
-    risk_score += 4
-
-risk_score = max(0, min(100, risk_score))
+for col in features:
+    min_val = df[col].min()
+    max_val = df[col].max()
+    df_norm[col] = (df[col] - min_val) / (max_val - min_val + 1e-9)
 
 # ----------------------------
-# MAIN DASHBOARD
+# RISK SCORE ENGINE
 # ----------------------------
+df["Risk_Score"] = (
+    df_norm["F2582"] * 15 +
+    df_norm["F2737"] * 25 +
+    df_norm["F2956"] * 20 +
+    df_norm["F3836"] * 10 +
+    df_norm["F3887"] * 10 +
+    df_norm["F1692"] * 10 +
+    df_norm["F670"] * 10
+)
 
-left,center,right = st.columns([1.2,1.8,1.2])
+df["Risk_Score"] = (df["Risk_Score"] / df["Risk_Score"].max()) * 100
+df["Risk_Score"] = df["Risk_Score"].fillna(0).clip(0, 100)
 
 # ----------------------------
-# LEFT
+# CATEGORY
 # ----------------------------
-
-with left:
-
-    st.subheader("Fraud Probability")
-
-    st.metric(
-        "Risk Score",
-        f"{risk_score:.2f}%"
-    )
-
-    if risk_score >= 80:
-        st.error("🔴 HIGH RISK")
-    elif risk_score >= 50:
-        st.warning("🟠 MEDIUM RISK")
+def categorize(x):
+    if x >= 80:
+        return "HIGH RISK"
+    elif x >= 50:
+        return "MEDIUM RISK"
     else:
-        st.success("🟢 LOW RISK")
+        return "LOW RISK"
 
-# ----------------------------
-# CENTER
-# ----------------------------
+df["Risk_Category"] = df["Risk_Score"].apply(categorize)
 
-with center:
+# =========================================================
+# 📌 TABLE
+# =========================================================
+st.subheader("📌 Mule Account Detection Table")
 
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=risk_score,
-        number={"suffix":"%"},
-        title={"text":"Mule Account Risk Score"},
-        gauge={
-            "axis":{"range":[0,100]},
-            "bar":{"color":"cyan"},
-            "steps":[
-                {"range":[0,40],"color":"green"},
-                {"range":[40,70],"color":"orange"},
-                {"range":[70,100],"color":"red"}
-            ]
-        }
-    ))
+table_df = df[[
+    "Account_ID",
+    label_col,
+    "Risk_Score",
+    "Risk_Category"
+]].rename(columns={
+    label_col: "Mule Account Status"
+})
 
-    fig.update_layout(
-        height=400,
-        paper_bgcolor="#0A0F1C"
-    )
+st.dataframe(table_df, use_container_width=True)
 
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
+# =========================================================
+# 🚨 TOP 10
+# =========================================================
+st.subheader("🚨 Top 10 Suspicious Accounts")
 
-# ----------------------------
-# RIGHT
-# ----------------------------
+top_df = df.sort_values("Risk_Score", ascending=False).head(10)
 
-with right:
+top_df = top_df.rename(columns={
+    label_col: "Mule Account Status"
+})
 
-    st.subheader("Alert Center")
+st.dataframe(
+    top_df[[
+        "Account_ID",
+        "Mule Account Status",
+        "Risk_Score",
+        "Risk_Category"
+    ]],
+    use_container_width=True
+)
 
-    if risk_score > 80:
+# =========================================================
+# 📊 RISK CATEGORY BAR GRAPH
+# =========================================================
+st.subheader("📊 Risk Category Distribution")
 
-        st.error("""
-🚨 CRITICAL ALERT
+category_counts = df["Risk_Category"].value_counts().reset_index()
+category_counts.columns = ["Risk Category", "Count"]
 
-Potential Mule Account
+fig1 = px.bar(
+    category_counts,
+    x="Risk Category",
+    y="Count",
+    color="Risk Category",
+    text="Count",
+    title="Fraud Risk Distribution"
+)
 
-Recommended:
-• Freeze Account
+st.plotly_chart(fig1, use_container_width=True)
 
-• Investigate Transactions
+# =========================================================
+# 🔥 FRAUD DRIVERS (NOW BAR GRAPH - IMPORTANT UPGRADE)
+# =========================================================
+st.subheader("🧠 Most Important Fraud Drivers (System Level)")
 
-• Notify Fraud Team
-""")
-
-    elif risk_score > 50:
-
-        st.warning("""
-⚠ Suspicious Behaviour
-
-Enhanced Monitoring Required
-""")
-
-    else:
-
-        st.success("""
-✅ Account Appears Legitimate
-""")
-
-# ----------------------------
-# AI RECOMMENDATION
-# ----------------------------
-
-st.divider()
-
-st.subheader("🤖 AI Recommendation")
-
-if risk_score > 80:
-
-    st.markdown("""
-### High Risk
-
-The account exhibits strong mule-account indicators.
-
-Recommended Actions:
-
-- Freeze transactions
-- Review linked accounts
-- Escalate to fraud operations
-""")
-
-elif risk_score > 50:
-
-    st.markdown("""
-### Medium Risk
-
-Unusual behavioural patterns detected.
-
-Recommended Actions:
-
-- Enhanced monitoring
-- KYC verification
-""")
-
-else:
-
-    st.markdown("""
-### Low Risk
-
-Normal account behaviour observed.
-
-Continue routine monitoring.
-""")
-
-# ----------------------------
-# FEATURE IMPORTANCE
-# ----------------------------
-
-st.divider()
-
-st.subheader("Top Fraud Drivers")
-
-feature_df = pd.DataFrame({
-    "Feature":[
-        "F3836",
-        "F2956",
-        "F3887",
-        "F670",
-        "F1692",
-        "F2582"
+driver_df = pd.DataFrame({
+    "Feature": [
+        "Transaction Anomaly (F2737)",
+        "Account Behavior (F2582)",
+        "Transaction Frequency (F2956)",
+        "Large Amount Activity (F3836)",
+        "Risk Signal Strength (F3887)",
+        "Behavior Deviation (F1692)",
+        "Velocity Pattern (F670)"
     ],
-    "Importance":[
-        31,
-        22,
-        18,
-        12,
+    "Impact Score": [
+        25,
+        15,
+        20,
         10,
-        7
+        10,
+        10,
+        10
     ]
 })
 
 fig2 = px.bar(
-    feature_df,
-    x="Importance",
+    driver_df,
+    x="Impact Score",
     y="Feature",
     orientation="h",
-    title="Feature Importance"
+    color="Impact Score",
+    text="Impact Score",
+    title="Key Fraud Driving Features"
 )
 
-st.plotly_chart(
-    fig2,
-    use_container_width=True
-)
+st.plotly_chart(fig2, use_container_width=True)
 
-# ----------------------------
-# CLASS DISTRIBUTION
-# ----------------------------
+# =========================================================
+# 🔍 ACCOUNT INVESTIGATION TOOL
+# =========================================================
+st.subheader("🔍 AI Explainable Fraud Detection")
 
+acc_id = st.text_input("Enter Account ID to analyze")
+
+if acc_id:
+
+    result = df[df["Account_ID"].astype(str) == str(acc_id)]
+
+    if len(result) == 0:
+        st.error("Account not found")
+
+    else:
+        row = result.iloc[0]
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric("Risk Score", round(row["Risk_Score"], 2))
+        col2.metric("Risk Category", row["Risk_Category"])
+        col3.metric("Mule Status", row[label_col])
+
+        st.markdown("### 🧠 AI Explanation")
+
+        reasons = []
+
+        if row["F2737"] > df["F2737"].mean():
+            reasons.append("High transaction anomaly (F2737)")
+
+        if row["F2582"] > df["F2582"].mean():
+            reasons.append("Unusual financial behavior (F2582)")
+
+        if row["F2956"] > df["F2956"].mean():
+            reasons.append("Abnormal transaction frequency (F2956)")
+
+        if row["Risk_Score"] > 80:
+            reasons.append("Critical risk threshold exceeded")
+
+        if len(reasons) == 0:
+            reasons.append("Normal behavioral pattern observed")
+
+        for r in reasons:
+            st.write("✔", r)
+
+# =========================================================
+# 🤖 AI RECOMMENDATION ENGINE
+# =========================================================
 st.divider()
 
-st.subheader("Fraud Distribution")
+st.subheader("🤖 AI Recommendation Engine")
 
-class_df = pd.DataFrame({
-    "Class":["Legitimate","Suspicious"],
-    "Count":[
-        len(df[df["F3924"]==0]),
-        len(df[df["F3924"]==1])
-    ]
-})
+high_risk = len(df[df["Risk_Category"] == "HIGH RISK"])
 
-fig3 = px.pie(
-    class_df,
-    values="Count",
-    names="Class",
-    hole=0.6
-)
+if high_risk > 0:
 
-st.plotly_chart(
-    fig3,
-    use_container_width=True
-)
+    st.error("🚨 HIGH ALERT: Mule Accounts Detected")
+
+    st.markdown("""
+### Recommended Actions:
+
+- Freeze HIGH RISK accounts immediately  
+- Investigate suspicious transactions  
+- Perform KYC re-verification  
+- Check linked account networks  
+- Escalate to fraud investigation team  
+""")
+
+else:
+
+    st.success("✅ System Normal")
+
+    st.markdown("""
+### Recommendation:
+
+- Continue monitoring transactions  
+- No immediate action required  
+""")
